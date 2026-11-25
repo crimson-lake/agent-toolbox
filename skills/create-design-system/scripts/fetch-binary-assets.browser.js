@@ -8,6 +8,7 @@
 // It returns an OBJECT mapping  "<subdir>/<filename>" -> base64 string, covering:
 //   - self-hosted @font-face fonts (woff2/woff/ttf/otf) under "fonts/<family>/..."
 //   - the favicon under "favicon.ico" (or the right extension)
+//   - the header logo image under "logo.<svg|webp|png|jpg>" (when it is an <img>)
 //
 // ----------------------------------------------------------------------------
 // WHY AN OBJECT, NOT JSON.stringify(...) ?  (read this — it caused a real incident)
@@ -93,6 +94,31 @@ async () => {
     }
   }
 
+  // ---- 3. Logo (raster or SVG file; inline <svg> logos are saved from Call C) ----
+  // Pick the first VISIBLE header/logo image that is not a lazy-load `data:`
+  // placeholder. Override the choice by setting window.__logoUrl before eval.
+  const logoUrl = window.__logoUrl || [...document.querySelectorAll(
+      'header img, [class*="header" i] img, [class*="logo" i] img, img[alt*="logo" i], img[src*="logo" i]')]
+    .filter(i => i.getBoundingClientRect().width > 50 && !(i.currentSrc || i.src || "").startsWith("data:"))
+    .map(i => i.currentSrc || i.src)[0];
+  if (logoUrl) {
+    try {
+      const res = await fetch(logoUrl);
+      if (res.ok) {
+        const ct = (res.headers.get("content-type") || "").toLowerCase();
+        const ext = ct.includes("svg") ? "svg" : ct.includes("webp") ? "webp" : ct.includes("png") ? "png"
+          : /jpe?g/.test(ct) ? "jpg" : (logoUrl.split("?")[0].split(".").pop() || "png").toLowerCase();
+        result["logo." + ext] = toB64(new Uint8Array(await res.arrayBuffer()));
+      } else {
+        result["logo.png"] = "ERR:" + res.status;
+      }
+    } catch (e) {
+      result["logo.png"] = "ERR:" + (e && e.message);
+    }
+  }
+
+  // Every value MUST be a base64 string or "ERR:..." — the decoder aborts on
+  // anything else, so never add metadata keys (content types, URLs) here.
   // Return the OBJECT (NOT a stringified string). See header note.
   return result;
 }
